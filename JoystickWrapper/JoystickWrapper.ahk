@@ -93,6 +93,18 @@ class JoystickWrapper {
 		return this._ProcessDeviceList(this.Interface.GetXInputDevices())
 	}
 	
+	SetXboxRumble(controllerId, WhichMotor, Speed, DurationMS){
+		this.Interface.SetXboxRumble(controllerId, WhichMotor, Speed * 257, DurationMS)
+	}
+	
+	SubscribeMouseMovement(controllerId, enable){
+		this.Interface.SubscribeMouseMovement(controllerId, enable)
+	}
+	
+	UpdateMouseSettings(controllerId, speed, sensitivity, thumb){
+		this.Interface.UpdateMouseSettings(controllerId, speed, sensitivity, thumb)
+	}
+	
 	; --- Common ---
 	_ProcessDeviceList(_device_list){
 		device_list := {}
