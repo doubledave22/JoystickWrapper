@@ -1,10 +1,13 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
+using WindowsInput;
 
 using SharpDX.DirectInput;
 using SharpDX.XInput;
-//using System.Diagnostics;
+using System.Diagnostics;
 
 namespace JWNameSpace
 {
@@ -12,6 +15,7 @@ namespace JWNameSpace
     {
         static private DirectInput directInput = new DirectInput();
         private SubscribedSticks stickSubscriptions = new SubscribedSticks();
+        private XBoxControllerAsMouse mouseMovement = new XBoxControllerAsMouse(0);
 
         // =================================================== PUBLIC  ===============================================================
         // Note! Be WARY of overloading any method expected to be hit by non C code
@@ -20,7 +24,7 @@ namespace JWNameSpace
         #region Public API Endpoints
 
         #region Subscription Methods
-        
+
         #region DirectInput
         // --------------------------- Subscribe / Unsubscribe methods ----------------------------------------
         public bool SubscribeAxis(string guid, int index, dynamic handler, string subscriberId = "0")
@@ -124,6 +128,27 @@ namespace JWNameSpace
             var subReq = new XInputSubscriptionRequest(XIInputType.Dpad, povDirection);
             return UnSubscribe((UserIndex)controllerId - 1, subReq, subscriberId);
         }
+
+        public void SetXboxRumble(int controllerId, int whichMotor, ushort speed, int durationMs)
+        {
+            var controllerIndex = (UserIndex)controllerId - 1;
+            if (!stickSubscriptions.XInputSticks.ContainsKey(controllerIndex))
+            {
+                throw new Exception($"Controller {controllerId} is not subscribed");
+            }
+            stickSubscriptions.XInputSticks[controllerIndex].SetRumble(whichMotor, speed, durationMs);
+        }
+
+        public void SubscribeMouseMovement(int controllerId, bool enable)
+        {
+            mouseMovement.AllowMouseMovement(enable);
+        }
+
+        public void UpdateMouseSettings(int controllerId, decimal speed, int sensitivity, string thumb)
+        {
+            mouseMovement.ChangeMouseSettings(speed, sensitivity, thumb);
+        }
+
         #endregion
 
         #endregion Subscription Methods
@@ -246,7 +271,7 @@ namespace JWNameSpace
                     try
                     {
                         var mightGoBoom = joystick.GetObjectInfoByName(joystickAxisOffsets[i].ToString());
-                        sa.Add(i+1);
+                        sa.Add(i + 1);
                     }
                     catch { }
                 }
@@ -261,7 +286,7 @@ namespace JWNameSpace
                 Buttons = 10;
                 POVs = 1;
                 SupportedAxes = new int[] { 1, 2, 3, 4, 5, 6 };
-                Guid = (Convert.ToInt32(controller.UserIndex)+1).ToString();
+                Guid = (Convert.ToInt32(controller.UserIndex) + 1).ToString();
                 Name = "Controller (XBOX 360 For Windows)";
             }
 
@@ -330,14 +355,14 @@ namespace JWNameSpace
         // Handles storing subscriptions for (and processing input of) a collection of joysticks
         private class SubscribedSticks
         {
-            public Dictionary<Guid, SubscribedDirectXStick> DirectXSticks { get; set; }
-            public Dictionary<UserIndex, SubscribedXIStick> XInputSticks { get; set; }
+            public ConcurrentDictionary<Guid, SubscribedDirectXStick> DirectXSticks { get; set; }
+            public ConcurrentDictionary<UserIndex, SubscribedXIStick> XInputSticks { get; set; }
             public bool threadRunning = false;
 
             public SubscribedSticks()
             {
-                DirectXSticks = new Dictionary<Guid, SubscribedDirectXStick>();
-                XInputSticks = new Dictionary<UserIndex, SubscribedXIStick>();
+                DirectXSticks = new ConcurrentDictionary<Guid, SubscribedDirectXStick>();
+                XInputSticks = new ConcurrentDictionary<UserIndex, SubscribedXIStick>();
             }
 
             // DirectInput
@@ -356,7 +381,7 @@ namespace JWNameSpace
                         return false;
                     }
                     var stick = new SubscribedDirectXStick(joystick);
-                    DirectXSticks.Add(guid, stick);
+                    DirectXSticks.TryAdd(guid, stick);
                 }
                 return true;
             }
@@ -370,7 +395,7 @@ namespace JWNameSpace
                 if (!XInputSticks.ContainsKey(player))
                 {
                     var subscribedController = new SubscribedXIStick(player);
-                    XInputSticks.Add(player, subscribedController);
+                    XInputSticks.TryAdd(player, subscribedController);
                 }
                 return true;
             }
@@ -438,7 +463,7 @@ namespace JWNameSpace
             {
                 if (DirectXSticks[guid].IsEmpty())
                 {
-                    DirectXSticks.Remove(guid);
+                    DirectXSticks.TryRemove(guid, out _);
                     SetMonitorState();
                     return true;
                 }
@@ -449,7 +474,7 @@ namespace JWNameSpace
             {
                 if (XInputSticks[controllerId].IsEmpty())
                 {
-                    XInputSticks.Remove(controllerId);
+                    XInputSticks.TryRemove(controllerId, out _);
                     SetMonitorState();
                     return true;
                 }
@@ -534,7 +559,7 @@ namespace JWNameSpace
                 joystick = passedStick;
                 Inputs = new Dictionary<JoystickOffset, SubscribedDIInput>();
                 SupportedInputs = new Dictionary<JoystickOffset, bool>();
-                
+
                 // Set BufferSize in order to use buffered data.
                 joystick.Properties.BufferSize = 128;
 
@@ -791,6 +816,138 @@ namespace JWNameSpace
 
         #region Single Stick
 
+        private class XBoxControllerAsMouse
+        {
+            private Controller _controller;
+
+            private decimal joyThresholdUpper;
+            private decimal joyThresholdLower;
+            private decimal joyMultiplier;
+            private const int RefreshRate = 60;
+            private string whichThumb;
+
+            private IMouseSimulator _mouseSimulator;
+            private Timer _timer;
+
+            public XBoxControllerAsMouse(UserIndex controllerId)
+            {
+                _controller = new Controller(controllerId);
+                _mouseSimulator = new InputSimulator().Mouse;
+                _timer = new Timer(obj => Update());
+            }
+
+
+            private void Update()
+            {
+                if (!_controller.IsConnected)
+                    return;
+
+                _controller.GetState(out var state);
+                Movement(state);
+            }
+
+            public void AllowMouseMovement(bool enable)
+            {
+                if (enable)
+                {
+                    _timer.Change(0, 1000 / RefreshRate);
+                }
+                else
+                {
+                    _timer.Change(Timeout.Infinite, Timeout.Infinite);
+                }
+            }
+
+            public void ChangeMouseSettings(decimal speed, int sensitivity, string thumb)
+            {
+                joyThresholdUpper = 50 + sensitivity;
+                joyThresholdLower = 50 - sensitivity;
+                joyMultiplier = 0.05m + (speed / 200m);
+                whichThumb = thumb;
+            }
+
+            private decimal Get_Delta(decimal value)
+            {
+                if (value > joyThresholdUpper)
+                    return value - joyThresholdUpper;
+
+                if (value < joyThresholdLower)
+                    return value - joyThresholdLower;
+
+                return 0;
+            }
+
+            private void Movement(State state)
+            {
+                decimal joyx = 0;
+                decimal joyy = 0;
+
+                if (whichThumb == "Left")
+                {
+                    joyx = 50 + (state.Gamepad.LeftThumbX / 655.34m);
+                    joyy = 50 + (state.Gamepad.LeftThumbY / 655.34m);
+                }
+
+                else if (whichThumb == "Right")
+                {
+                    joyx = 50 + (state.Gamepad.RightThumbX / 655.34m);
+                    joyy = 50 + (state.Gamepad.RightThumbY / 655.34m);
+                }
+
+                decimal deltaX = Get_Delta(joyx);
+                decimal deltaY = Get_Delta(joyy);
+
+                decimal xRaised = Pow(deltaX * joyMultiplier, 3);
+                decimal yRaised = Pow(deltaY * joyMultiplier, 3);
+
+                decimal x = (Math.Abs(xRaised) < 1m) ? (1m * SignMM(deltaX)) : xRaised;
+                decimal y = (Math.Abs(yRaised) < 1m) ? (1m * SignMM(deltaY)) : yRaised;
+
+                // dont move mouse if we dont have any input (otherwise computer wont sleep)
+                if (x == 0 && y == 0)
+                    return;
+
+                // will crash script on task manager/higher priority apps so use try catch
+                try
+                {
+                    _mouseSimulator.MoveMouseBy(Convert.ToInt32(x), Convert.ToInt32(-y));
+                }
+                catch
+                {
+                }
+            }
+
+            public static decimal Pow(decimal x, int n)
+            {
+                if (n < 0)
+                {
+                    throw new ArgumentOutOfRangeException("n");
+                }
+
+                decimal result = 1;
+                decimal multiplier = x;
+
+                while (n > 0)
+                {
+                    if ((n & 1) > 0) result *= multiplier;
+                    multiplier *= multiplier;
+                    n >>= 1;
+                }
+
+                return result;
+            }
+
+            private decimal SignMM(decimal n)
+            {
+                if (n > 0)
+                    return 1;
+                else if (n < 0)
+                    return -1;
+                else
+                    return 0;
+            }
+        }
+
         private class SubscribedXIStick
         {
             public Controller controller;
@@ -888,7 +1045,11 @@ namespace JWNameSpace
 
             public void Poll()
             {
+                if (!controller.IsConnected)
+                    return;
+
                 var state = controller.GetState();
+
                 foreach (var subscribedAxis in SubscribedAxes)
                 {
                     var value = Convert.ToInt32(state.Gamepad.GetType().GetField(xinputAxisIdentifiers[subscribedAxis.Key - 1]).GetValue(state.Gamepad));
@@ -906,6 +1067,32 @@ namespace JWNameSpace
                     var value = Convert.ToInt32(flag != GamepadButtonFlags.None);
                     subscribedDpadDirection.Value.ProcessPollRecord(value);
                 }
+            }
+
+            public async void SetRumble(int whichMotor, ushort speed, int durationMs)
+            {
+                if (!controller.IsConnected)
+                    return;
+
+                var vibration = new Vibration();
+
+                if (whichMotor == 1)
+                {
+                    vibration.LeftMotorSpeed = speed;
+                }
+                else if (whichMotor == 2)
+                {
+                    vibration.RightMotorSpeed = speed;
+                }
+                else if (whichMotor == 0) 
+                {
+                    vibration.LeftMotorSpeed = speed;
+                    vibration.RightMotorSpeed = speed;
+                }
+
+                controller.SetVibration(vibration);
+                await Task.Delay(durationMs); // this is non-blocking
+                controller.SetVibration(new Vibration()); // Set speeds to 0 to turn off
             }
         }
 

@@ -35,18 +35,19 @@ namespace TestApp
 
             if (guidStr != "")
             {
+                Console.WriteLine("Starting Up");
                 // Demo - three subscriptions requested
                 // Subscription #1 - Axis
-                jw.SubscribeAxis(guidStr, 1, new Action<int>((value) => { Console.WriteLine("Axis 1 Value: " + value); }), "LV1");
-
-                // Subscription #2 - Button
-                jw.SubscribeButton(guidStr, 1, new Action<int>((value) => { Console.WriteLine("Button 1 Value: " + value); }), "LV1");
-
-                // Subscription #3 - POV
-                jw.SubscribePov(guidStr, 1, new Action<int>((value) => { Console.WriteLine("POV 1 Value: " + value); }), "LV1");
-
-                // Subscription #3 - POV *Direction* (Up)
-                jw.SubscribePovDirection(guidStr, 1, 1, new Action<int>((value) => { Console.WriteLine("POV 1, Direction Up Value: " + value); }), "LV1");
+      // jw.SubscribeAxis(guidStr, 1, new Action<int>((value) => { Console.WriteLine("Axis 1 Value: " + value); }), "LV1");
+      // 
+      // // Subscription #2 - Button
+      // jw.SubscribeButton(guidStr, 1, new Action<int>((value) => { Console.WriteLine("Button 1 Value: " + value); }), "LV1");
+      // 
+      // // Subscription #3 - POV
+      // jw.SubscribePov(guidStr, 1, new Action<int>((value) => { Console.WriteLine("POV 1 Value: " + value); }), "LV1");
+      // 
+      // // Subscription #3 - POV *Direction* (Up)
+      // jw.SubscribePovDirection(guidStr, 1, 1, new Action<int>((value) => { Console.WriteLine("POV 1, Direction Up Value: " + value); }), "LV1");
             }
 
             // --- XInput ---
@@ -58,6 +59,15 @@ namespace TestApp
                 jw.SubscribeXboxAxis(1, 1, new Action<int>((value) => { Console.WriteLine("XBox Axis 1 Value: " + value); }), "LV1");
                 jw.SubscribeXboxButton(1, 1, new Action<int>((value) => { Console.WriteLine("XBox Button 1 Value: " + value); }), "LV1");
                 jw.SubscribeXboxPovDirection(1, 1, new Action<int>((value) => { Console.WriteLine("XBox Dpad Up Value: " + value); }), "LV1");
+                jw.SubscribeMouseMovement(1, true);
+                jw.UpdateMouseSettings(1, 8, 5,"Right");
+                Thread.Sleep(5000);
+                jw.UpdateMouseSettings(1, 8, 5, "Left");
+                //jw.SubscribeMouseMovement(1, false);
+                // jw.SubscribeMouseMovement(1, false);
+                //jw.UpdateMouseSettings(1, 5, 15);
+                // jw.SetXboxRumble(1, 1, 5000);
+                // jw.SetXboxRumble(1, 2, 5000);
             }
 
         }
